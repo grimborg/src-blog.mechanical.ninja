@@ -1,0 +1,21 @@
+baseurl = "http://blog.mechanical.ninja/"
+languageCode = "en-us"
+title = "Mechanical Ninja"
+theme = "hyde"
+publishdir = "public"
+canonifyurls = true
+
+[params]
+description = " "
+
+[indexes]
+category = "categories"
+
+[[menu.main]]
+name = "About me"
+url = "http://oscarvilaplana.cat"
+
+[[menu.docker]]
+name = "Docker"
+identifier = "docker"
+url = "/docker/"
