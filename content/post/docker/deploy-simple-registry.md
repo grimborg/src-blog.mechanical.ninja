@@ -69,7 +69,7 @@ $ cat <yourdomain>.crt \
 Create the directories to store the certificate, the passwords and the vhost settings:
 
 ```
-mkdir -p $HOME/nginx/{certs,vhost.d,passwords}
+$ mkdir -p $HOME/nginx/{certs,vhost.d,passwords}
 ```
 
 #### SSL Certificate
@@ -95,8 +95,8 @@ Tweak the `client_max_body_size` as desired. That will be the maximum upload siz
 For each user, run the following:
 
 ```
-printf "<username>:$(openssl passwd -crypt <password>)n" \
->> $HOME/nginx/passwords/<your-domain-name>
+$ printf "<username>:$(openssl passwd -crypt <password>)n" \
+    >> $HOME/nginx/passwords/<your-domain-name>
 ```
 
 This will result on a file named `nginx/passwords/<you-domain-name>` containing, for each user:
@@ -126,6 +126,91 @@ Optionally, you may want to see the nginx logs, which are discarded by default. 
 ```
 
 Running this `docker run` command will start `nginx` listening on port 443, and it will automatically set up a virtual host for our docker registry based on its `VIRTUAL_HOST` environment variable.
+
+## Keeping it running on CoreOS
+
+With the previous steps you're good to go, but you're running CoreOS you can take advantage of [Fleet](https://github.com/coreos/fleet) to start and keep your containers running.
+
+Create a service file for nginx, called `nginx.service`, with the following contents:
+
+```
+[Unit]
+Description=Nginx
+After=docker.service
+Requires=docker.service
+
+[Service]
+TimeoutStartSec=0
+ExecStartPre=-/usr/bin/docker kill nginx
+ExecStartPre=-/usr/bin/docker rm nginx
+ExecStart=/usr/bin/bash -c "docker run -p 443:443 \
+        -v /home/core/nginx/certs:/etc/nginx/certs:ro \
+        -v /home/core/nginx/vhost.d:/etc/nginx/vhost.d:ro \
+        -v /home/core/nginx/passwords:/etc/nginx/passwords:ro \
+        -v /var/run/docker.sock:/tmp/docker.sock:ro \
+        --name nginx \
+        jwilder/nginx-proxy"
+ExecStop=/usr/bin/docker stop nginx
+Restart=always
+RestartSec=10s
+```
+
+Create a service file for the registry, called `registry.service`, with the following contents:
+
+```
+[Unit]
+Description=Registry
+After=docker.service
+Requires=docker.service
+Requires=nginx.service
+
+[Service]
+TimeoutStartSec=0
+ExecStartPre=-/usr/bin/docker kill registry
+ExecStartPre=-/usr/bin/docker rm registry
+ExecStart=/usr/bin/bash -c "/usr/bin/docker run -p 127.0.0.1::5000 \
+    -v /home/core/registry/storage:/registry \
+    -e REGISTRY_STORAGE_FILESYSTEM_ROOTDIRECTORY=/registry \
+    -e VIRTUAL_HOST=registry.mechanical.ninja \
+    --name registry registry:2.0"
+ExecStop=/usr/bin/docker stop registry
+Restart=always
+RestartSec=10s
+```
+
+Next, load the services:
+
+```
+$ fleetctl load nginx
+Unit registry.service loaded on 34bc7a1a.../188.112.99.247
+
+$ fleetctl load registry
+Unit registry.service loaded on 34bc7a1a.../188.112.99.247
+```
+
+Finally, start the registry service by running `fleetctl start registry`. Because this service depends on nginx (see the `Requires=nginx.service` entry above), this will also start nginx.
+
+You can run `fleetctl list-units` to verify that both services are running:
+
+```
+$ fleetctl list-units
+UNIT            MACHINE             ACTIVE  SUB
+nginx.service       34bc7a1a.../188.112.99.247  active  running
+registry.service    34bc7a1a.../188.112.99.247  active  running
+```
+
+If there's been any problem you can check the logs of either service by running `fleetctl journal nginx` or `fleetctl journal registry`.
+
+If `fleet` fails to start, make sure that `fleet` and `etcd` are running:
+
+```
+$ sudo systemctl start etcd
+$ sudo systemctl start fleet
+```
+
+### Data storage
+
+Note that although we are using Docker's bind mount option (`-v`) to store the registry, certificates, and configuration data on the local host, the proper way to do this would be to use [data volume containers](https://docs.docker.com/userguide/dockervolumes/). However, if you are running a single server this simple way will work fine.
 
 ## Log in
 
